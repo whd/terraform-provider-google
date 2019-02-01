@@ -3,6 +3,7 @@ package google
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
@@ -114,9 +115,35 @@ func testAccDataflowJobExists(n string) resource.TestCheckFunc {
 			return fmt.Errorf("No ID is set")
 		}
 		config := testAccProvider.Meta().(*Config)
+
 		_, err := config.clientDataflow.Projects.Jobs.Get(config.Project, rs.Primary.ID).Do()
+
 		if err != nil {
 			return fmt.Errorf("Job does not exist")
+		}
+
+		// If a service account has been configured, check that it was applied
+		// to the Dataflow job's generated instance template
+		if serviceAccountEmail, ok := rs.Primary.Attributes["service_account_email"]; ok {
+			filter := fmt.Sprintf("properties.labels.dataflow_job_id = %s", rs.Primary.ID)
+			// wait for instance template generation
+			// FIXME add a retry loop
+			time.Sleep(20 * time.Second)
+			instanceTemplates, err := config.clientCompute.InstanceTemplates.List(
+				config.Project).Filter(filter).MaxResults(2).Fields("items/properties/serviceAccounts/email").Do()
+			if err != nil {
+				return fmt.Errorf("Error getting service account from instance template: %s", err)
+			}
+			if len(instanceTemplates.Items) != 1 {
+				return fmt.Errorf("Wrong number of matching instance templates for dataflow job: %s, %d", rs.Primary.ID, len(instanceTemplates.Items))
+			}
+			serviceAccounts := instanceTemplates.Items[0].Properties.ServiceAccounts
+			if len(serviceAccounts) > 1 {
+				return fmt.Errorf("Found multiple service accounts for dataflow job: %s, %d", rs.Primary.ID, len(serviceAccounts))
+			}
+			if serviceAccountEmail != serviceAccounts[0].Email {
+				return fmt.Errorf("Service account mismatch: %s != %s", serviceAccountEmail, serviceAccounts[0].Email)
+			}
 		}
 
 		return nil
