@@ -27,6 +27,7 @@ func resourceDataflowJob() *schema.Resource {
 	return &schema.Resource{
 		Create: resourceDataflowJobCreate,
 		Read:   resourceDataflowJobRead,
+		Update: resourceDataflowJobUpdate,
 		Delete: resourceDataflowJobDelete,
 
 		Schema: map[string]*schema.Schema{
@@ -39,13 +40,11 @@ func resourceDataflowJob() *schema.Resource {
 			"template_gcs_path": {
 				Type:     schema.TypeString,
 				Required: true,
-				ForceNew: true,
 			},
 
 			"temp_gcs_location": {
 				Type:     schema.TypeString,
 				Required: true,
-				ForceNew: true,
 			},
 
 			"zone": {
@@ -63,13 +62,11 @@ func resourceDataflowJob() *schema.Resource {
 			"max_workers": {
 				Type:     schema.TypeInt,
 				Optional: true,
-				ForceNew: true,
 			},
 
 			"parameters": {
 				Type:     schema.TypeMap,
 				Optional: true,
-				ForceNew: true,
 			},
 
 			"on_delete": {
@@ -94,8 +91,26 @@ func resourceDataflowJob() *schema.Resource {
 			"service_account_email": &schema.Schema{
 				Type:     schema.TypeString,
 				Optional: true,
+			},
+
+			"job_type": {
+				Type:     schema.TypeString,
+				Computed: true,
 				ForceNew: true,
 			},
+		},
+
+		// FIXME only Java SDK streaming jobs are supported, so technically we
+		// would need to parse environment.version.job_type and make sure it's Java
+		// However, version's structure is undocumented. We could use user
+		// agent as a proxy but it's probably theoretically possible to run a
+		// Java job via Python UA and v.v.
+		// Since we don't use Python jobs I'm deferring this for now.
+		CustomizeDiff: func(diff *schema.ResourceDiff, meta interface{}) error {
+			if diff.Get("job_type") != "JOB_TYPE_STREAMING" {
+				diff.SetNewComputed("job_type")
+			}
+			return nil
 		},
 	}
 }
@@ -143,6 +158,35 @@ func resourceDataflowJobCreate(d *schema.ResourceData, meta interface{}) error {
 	return resourceDataflowJobRead(d, meta)
 }
 
+func resourceDataflowJobUpdate(d *schema.ResourceData, meta interface{}) error {
+	config := meta.(*Config)
+
+	project, err := getProject(d, config)
+	if err != nil {
+		return err
+	}
+
+	region, err := getRegion(d, config)
+	if err != nil {
+		return err
+	}
+
+	id := d.Id()
+
+	job, err := getJob(config, project, region, id)
+
+	if err != nil {
+		return handleNotFoundError(err, d, fmt.Sprintf("Dataflow job %s", id))
+	}
+
+	job.ReplaceJobId = id
+	_, err = updateJob(config, project, region, id, job)
+	if err != nil {
+		return err
+	}
+	return resourceDataflowJobRead(d, meta)
+}
+
 func resourceDataflowJobRead(d *schema.ResourceData, meta interface{}) error {
 	config := meta.(*Config)
 
@@ -166,6 +210,7 @@ func resourceDataflowJobRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("state", job.CurrentState)
 	d.Set("name", job.Name)
 	d.Set("project", project)
+	d.Set("job_type", job.Type)
 
 	if _, ok := dataflowTerminalStatesMap[job.CurrentState]; ok {
 		log.Printf("[DEBUG] Removing resource '%s' because it is in state %s.\n", job.Name, job.CurrentState)
