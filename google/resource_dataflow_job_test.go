@@ -8,6 +8,8 @@ import (
 	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
+
+	"google.golang.org/api/compute/v1"
 )
 
 func TestAccDataflowJobCreate(t *testing.T) {
@@ -127,16 +129,27 @@ func testAccDataflowJobExists(n string) resource.TestCheckFunc {
 		if serviceAccountEmail, ok := rs.Primary.Attributes["service_account_email"]; ok {
 			filter := fmt.Sprintf("properties.labels.dataflow_job_id = %s", rs.Primary.ID)
 			// wait for instance template generation
-			// FIXME add a retry loop
-			time.Sleep(20 * time.Second)
-			instanceTemplates, err := config.clientCompute.InstanceTemplates.List(
-				config.Project).Filter(filter).MaxResults(2).Fields("items/properties/serviceAccounts/email").Do()
+			var instanceTemplates *compute.InstanceTemplateList
+			err := resource.Retry(10*time.Second, func() *resource.RetryError {
+				instanceTemplates, err =
+					config.clientCompute.InstanceTemplates.List(
+						config.Project).Filter(filter).MaxResults(2).Fields("items/properties/serviceAccounts/email").Do()
+				if err != nil {
+					return resource.NonRetryableError(err)
+				}
+				if len(instanceTemplates.Items) == 0 {
+					return resource.RetryableError(fmt.Errorf("no instance template found for dataflow job"))
+				}
+				if len(instanceTemplates.Items) > 1 {
+					return resource.NonRetryableError(fmt.Errorf("Wrong number of matching instance templates for dataflow job: %s, %d", rs.Primary.ID, len(instanceTemplates.Items)))
+				}
+				return nil
+			})
+
 			if err != nil {
 				return fmt.Errorf("Error getting service account from instance template: %s", err)
 			}
-			if len(instanceTemplates.Items) != 1 {
-				return fmt.Errorf("Wrong number of matching instance templates for dataflow job: %s, %d", rs.Primary.ID, len(instanceTemplates.Items))
-			}
+
 			serviceAccounts := instanceTemplates.Items[0].Properties.ServiceAccounts
 			if len(serviceAccounts) > 1 {
 				return fmt.Errorf("Found multiple service accounts for dataflow job: %s, %d", rs.Primary.ID, len(serviceAccounts))
