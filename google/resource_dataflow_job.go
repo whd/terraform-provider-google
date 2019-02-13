@@ -66,6 +66,12 @@ func resourceDataflowJob() *schema.Resource {
 				ForceNew: true,
 			},
 
+			"num_workers": {
+				Type:     schema.TypeInt,
+				Optional: true,
+				ForceNew: true,
+			},
+
 			"parameters": {
 				Type:     schema.TypeMap,
 				Optional: true,
@@ -132,6 +138,7 @@ func resourceDataflowJobCreate(d *schema.ResourceData, meta interface{}) error {
 		TempLocation:        d.Get("temp_gcs_location").(string),
 		Zone:                zone,
 		MaxWorkers:          int64(d.Get("max_workers").(int)),
+		NumWorkers:          int64(d.Get("num_workers").(int)),
 		ServiceAccountEmail: d.Get("service_account_email").(string),
 	}
 
