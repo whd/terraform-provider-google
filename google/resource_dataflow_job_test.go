@@ -30,6 +30,26 @@ func TestAccDataflowJobCreate(t *testing.T) {
 	})
 }
 
+func TestAccDataflowJobCreateLabels(t *testing.T) {
+	t.Parallel()
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckDataflowJobDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccDataflowJobLabels,
+				Check: resource.ComposeTestCheckFunc(
+					testAccDataflowJobExists(
+						"google_dataflow_job.big_data"),
+					testAccDataflowJobHasLabel(
+						"my-label", "my-label-value", "google_dataflow_job.big_data"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccDataflowJobRegionCreate(t *testing.T) {
 	t.Parallel()
 	resource.Test(t, resource.TestCase{
@@ -160,6 +180,32 @@ func testAccDataflowJobExists(n string) resource.TestCheckFunc {
 	}
 }
 
+func testAccDataflowJobHasLabel(key, value string, n string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[n]
+		if !ok {
+			return fmt.Errorf("Not found: %s", n)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("No ID is set")
+		}
+		config := testAccProvider.Meta().(*Config)
+		job, err := config.clientDataflow.Projects.Jobs.Get(config.Project, rs.Primary.ID).Do()
+		if err != nil {
+			return fmt.Errorf("Job does not exist")
+		}
+
+		if val, ok := job.Labels[key]; ok {
+			if val != value {
+				return fmt.Errorf("User Label value did not match for key %s: expected %s but found %s",
+					key, value, val)
+			}
+		} else {
+			return fmt.Errorf("User Label with key %s not found", key)
+		}
+		return nil
+	}
+}
 func testAccDataflowJobRegionExists(n string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[n]
@@ -197,6 +243,32 @@ resource "google_dataflow_job" "big_data" {
 		inputFile = "gs://dataflow-samples/shakespeare/kinglear.txt"
 		output    = "${google_storage_bucket.temp.url}/output"
 	}
+	zone = "us-central1-f"
+	project = "%s"
+
+	on_delete = "cancel"
+}`, acctest.RandString(10), acctest.RandString(10), getTestProjectFromEnv())
+
+var testAccDataflowJobLabels = fmt.Sprintf(`
+resource "google_storage_bucket" "temp" {
+	name = "dfjob-test-%s-temp"
+
+	force_destroy = true
+}
+
+resource "google_dataflow_job" "big_data" {
+	name = "dfjob-test-%s"
+
+	template_gcs_path = "gs://dataflow-templates/wordcount/template_file"
+	temp_gcs_location = "${google_storage_bucket.temp.url}"
+
+	parameters = {
+		inputFile = "gs://dataflow-samples/shakespeare/kinglear.txt"
+		output    = "${google_storage_bucket.temp.url}/output"
+	}
+	labels = {
+		my-label = "my-label-value"
+    }
 	zone = "us-central1-f"
 	project = "%s"
 

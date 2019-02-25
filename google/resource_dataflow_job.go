@@ -96,6 +96,14 @@ func resourceDataflowJob() *schema.Resource {
 				Optional: true,
 				ForceNew: true,
 			},
+
+			"labels": {
+				Type:     schema.TypeMap,
+				Optional: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+				Set:      schema.HashString,
+				ForceNew: true,
+			},
 		},
 	}
 }
@@ -125,6 +133,10 @@ func resourceDataflowJobCreate(d *schema.ResourceData, meta interface{}) error {
 		Zone:                zone,
 		MaxWorkers:          int64(d.Get("max_workers").(int)),
 		ServiceAccountEmail: d.Get("service_account_email").(string),
+	}
+
+	if _, ok := d.GetOk("labels"); ok {
+		env.AdditionalUserLabels = expandLabels(d)
 	}
 
 	request := dataflow.CreateJobFromTemplateRequest{
@@ -166,6 +178,7 @@ func resourceDataflowJobRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("state", job.CurrentState)
 	d.Set("name", job.Name)
 	d.Set("project", project)
+	d.Set("labels", job.Labels)
 
 	if _, ok := dataflowTerminalStatesMap[job.CurrentState]; ok {
 		log.Printf("[DEBUG] Removing resource '%s' because it is in state %s.\n", job.Name, job.CurrentState)
