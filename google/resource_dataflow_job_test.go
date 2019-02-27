@@ -80,6 +80,8 @@ func TestAccDataflowJobCreateWithServiceAccount(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccDataflowJobExists(
 						"google_dataflow_job.big_data"),
+					testAccDataflowJobHasServiceAccount(
+						"google_dataflow_job.big_data"),
 				),
 			},
 		},
@@ -142,14 +144,32 @@ func testAccDataflowJobExists(n string) resource.TestCheckFunc {
 			return fmt.Errorf("Job does not exist")
 		}
 
-		// If a service account has been configured, check that it was applied
-		// to the Dataflow job's generated instance template.
+		return nil
+	}
+}
+
+func testAccDataflowJobHasServiceAccount(n string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[n]
+		if !ok {
+			return fmt.Errorf("Not found: %s", n)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("No ID is set")
+		}
+
+		config := testAccProvider.Meta().(*Config)
+
+		// Check that the service account was applied to the Dataflow job's
+		// generated instance template.
 		if serviceAccountEmail, ok := rs.Primary.Attributes["service_account_email"]; ok {
 			filter := fmt.Sprintf("properties.labels.dataflow_job_id = %s", rs.Primary.ID)
+			var serviceAccounts []*compute.ServiceAccount
+
 			// Wait for instance template generation.
-			var instanceTemplates *compute.InstanceTemplateList
-			err := resource.Retry(10*time.Second, func() *resource.RetryError {
-				instanceTemplates, err =
+			err := resource.Retry(1*time.Minute, func() *resource.RetryError {
+				var err error
+				instanceTemplates, err :=
 					config.clientCompute.InstanceTemplates.List(config.Project).Filter(filter).MaxResults(2).Fields("items/properties/serviceAccounts/email").Do()
 				if err != nil {
 					return resource.NonRetryableError(err)
@@ -160,6 +180,7 @@ func testAccDataflowJobExists(n string) resource.TestCheckFunc {
 				if len(instanceTemplates.Items) > 1 {
 					return resource.NonRetryableError(fmt.Errorf("Wrong number of matching instance templates for dataflow job: %s, %d", rs.Primary.ID, len(instanceTemplates.Items)))
 				}
+				serviceAccounts = instanceTemplates.Items[0].Properties.ServiceAccounts
 				return nil
 			})
 
@@ -167,7 +188,6 @@ func testAccDataflowJobExists(n string) resource.TestCheckFunc {
 				return fmt.Errorf("Error getting service account from instance template: %s", err)
 			}
 
-			serviceAccounts := instanceTemplates.Items[0].Properties.ServiceAccounts
 			if len(serviceAccounts) > 1 {
 				return fmt.Errorf("Found multiple service accounts for dataflow job: %s, %d", rs.Primary.ID, len(serviceAccounts))
 			}
@@ -179,7 +199,6 @@ func testAccDataflowJobExists(n string) resource.TestCheckFunc {
 		return nil
 	}
 }
-
 func testAccDataflowJobHasLabel(key, value string, n string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[n]
