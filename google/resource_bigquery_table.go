@@ -1,8 +1,13 @@
 package google
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io/ioutil"
+
 	"errors"
 	"fmt"
 	"log"
@@ -578,12 +583,47 @@ func resourceBigQueryTable() *schema.Resource {
 
 			// Schema: [Optional] Describes the schema of this table.
 			"schema": {
-				Type:         schema.TypeString,
-				Optional:     true,
-				Computed:     true,
-				ValidateFunc: validation.StringIsJSON,
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+				// Support any of:
+				// json string (standard)
+				// base64-encoded json string
+				// base64-encoded gzipped json string
+				ValidateFunc: func(i interface{}, k string) (warnings []string, errors []error) {
+					if warnings, errors = validation.StringIsJSON(i, k); len(errors) == 0 {
+						return
+					}
+					if warnings, errors = validation.StringIsBase64(i, k); len(errors) > 0 {
+						return
+					}
+					str, _ := i.(string)
+					decoded, _ := base64.StdEncoding.DecodeString(str)
+					if warnings, errors = validation.StringIsJSON(string(decoded), k); len(errors) == 0 {
+						return
+					}
+					reader, err := gzip.NewReader(bytes.NewReader(decoded))
+					if err != nil {
+						return nil, []error{err}
+					}
+					result, err := ioutil.ReadAll(reader)
+					if err != nil {
+						return nil, []error{err}
+					}
+					warnings, errors = validation.StringIsJSON(string(result), k)
+					return
+				},
 				StateFunc: func(v interface{}) string {
-					json, _ := structure.NormalizeJsonString(v)
+					if json, err := structure.NormalizeJsonString(v); err == nil {
+						return json
+					}
+					data, _ := base64.StdEncoding.DecodeString(v.(string))
+					if json, err := structure.NormalizeJsonString(string(data)); err == nil {
+						return json
+					}
+					reader, _ := gzip.NewReader(bytes.NewReader(data))
+					result, _ := ioutil.ReadAll(reader)
+					json, _ := structure.NormalizeJsonString(string(result))
 					return json
 				},
 				DiffSuppressFunc: bigQueryTableSchemaDiffSuppress,
